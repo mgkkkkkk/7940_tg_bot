@@ -13,8 +13,9 @@ Send /start to initiate the conversation.
 Press Ctrl-C on the command line or send a signal to the process to stop the
 bot.
 """
-
+import os
 import pymysql
+from pymysql import converters
 import logging
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
 from telegram.ext import (
@@ -35,12 +36,13 @@ logger = logging.getLogger(__name__)
 
 CHOOSE, SEARCH, LOCATION, PHOTO, ROUTE = range(5)
 
-#bot = telegram.Bot(token="5211434946:AAEv-3PvEJ98N1ufat_t96KDgUyyuzl3KZY"
 
-db = pymysql.connect(host='192.168.95.100',user='root',password='123456',database='comp7940')
+conv = converters.conversions
+conv[246] = float
+db = pymysql.connect(host=(os.environ['HOST']),user=(os.environ['USER']),password=(os.environ['PASSWORD']), database=(os.environ['DB']), conv=conv)
 
-mountain_set = {'Lion', 'TungYeung'}
-choose_mountain = ''
+mountain_set = {'Lion', 'TungYeung', 'Lantau'}
+#choose_mountain = ''
      
 
 def start(update: Update, context: CallbackContext) -> int:
@@ -64,31 +66,46 @@ def choose(update: Update, context: CallbackContext) -> int:
     
     update.message.reply_text(
         'Search a mountain: \n\n'
-        'Difficulty: /easy or /midium or /hard.\n\n',
+        'Difficulty: /easy or /medium or /hard.\n\n',
         reply_markup=ReplyKeyboardRemove(),
     )
 
     return SEARCH
 
 def search(update: Update, context: CallbackContext) -> int:
-    difficulty = update.message.text
-    
+    print("--------search--------")
+    input = update.message.text
+    print("input: " + input)
+    difficulty = input.lstrip('/')
     
     #mysql get name
+    
+    difficulty = "'" + difficulty + "'"
+    sql = f"SELECT name FROM mountain WHERE difficulty = {difficulty}"
     global db
     cursor = db.cursor()
-    sql = "SELECT name FROM mountain WHERE difficulty = " + difficulty
+    result_list = []
     try:
         cursor.execute(sql)
-        db.commit()
+
+        results = cursor.fetchall()
+    
+        for i in results:       
+            str = ''.join(i)
+            result_list.append(str)
+
     except:
         db.rollback()
-    db.close()
+
     
-    a = 'Lion'
+    text = ''
+    for i in result_list:
+        text += '/' + i + '\n\n'
+    print(text)
+
     update.message.reply_text(
-        'There are the mountains:\n\n'
-        '/' + a + '\n\n'
+        'Mountains:\n\n'
+        + text +
         'click one to get the location.\n\n',
         reply_markup=ReplyKeyboardRemove(),
     )
@@ -98,19 +115,50 @@ def search(update: Update, context: CallbackContext) -> int:
 
 def location(update: Update, context: CallbackContext) -> int:
     """Stores the location and asks for some info about the user."""
-    
+    print("--------location--------")
     input = update.message.text
+    print("input:" + input)
+    
     global mountain_set
-    global choose_mountain 
+    
+    longitude = 114.326784
+    latitude = 22.345672
+    
+    #global choose_mountain 
     choose_mountain = input.lstrip('/')
     if (choose_mountain not in mountain_set):
         update.message.reply_text('Send the mountain name.')        
         return LOCATION
 
-    
+    choose_mountain = "'" + choose_mountain + "'"
     #mysql get location
-    longitude = 114.326784
-    latitude = 22.345672
+
+    sql = f"SELECT longitude, latitude FROM mountain WHERE name = {choose_mountain}"
+
+    global db
+    cursor = db.cursor()
+    location = ()
+    
+    try:
+        print("query location")
+        cursor.execute(sql)
+        print('success')
+
+        results = cursor.fetchall()
+        print(results) 
+        location = results[0]
+        longitude = location[0]
+        latitude = location[1]
+        
+    except:
+        print("rollback happen")
+        db.rollback()
+
+    
+
+    print(longitude)
+    print(latitude)
+
     update.message.reply_text(
         'The location of this mountain is:'
     )
@@ -121,7 +169,7 @@ def location(update: Update, context: CallbackContext) -> int:
         'Send ' + input + ' to see it.\n\n'
     )
     
-    #bot.send_location(chat_id=user.id, longitude=114.000000, latitude=22.000000)
+
     
     return PHOTO
 
@@ -139,18 +187,40 @@ def skip_location(update: Update, context: CallbackContext) -> int:
 
 
 def photo(update: Update, context: CallbackContext) -> int:
+    print("--------photo--------")
 
     input = update.message.text
-    print(input)
-    global choose_mountain 
-    if choose_mountain != input.lstrip('/'):
+    print("input: " + input)
     
-        return PHOTO
+    #global choose_mountain 
+    #if choose_mountain != input.lstrip('/'):
+    #    return PHOTO
     
-    #global dbconn
+    choose_mountain = input.lstrip('/')
+    choose_mountain = "'" + choose_mountain + "'"
+    #PHOTO_PATH = './picture' + input + '.jpg'
+    
+    global db
+    cursor = db.cursor()
     #mysql get photo_url
+    sql = f"SELECT picture FROM mountain WHERE name = {choose_mountain}"
 
-    PHOTO_PATH = './picture' + input + '.jpg'
+
+    try:
+        print('query photo_url')
+        cursor.execute(sql)
+        print('success')
+        results = cursor.fetchall()
+        results = results[0]
+        list = []
+        for i in results:       
+            str = ''.join(i)
+            list.append(str)
+        PHOTO_PATH = list[0]
+        print(PHOTO_PATH)
+        
+    except:
+        db.rollback()
 
     update.message.reply_text('This is the picture.\n\n')
     update.message.reply_photo(photo=open(PHOTO_PATH, 'rb'))
@@ -159,8 +229,6 @@ def photo(update: Update, context: CallbackContext) -> int:
         'Send /route to see it.'
     )
     
-    #bot = telegram.Bot(token="5211434946:AAEv-3PvEJ98N1ufat_t96KDgUyyuzl3KZY")
-    #bot.send_photo(chat_id=user.id, photo=open(PHOTO_PATH, 'rb'))
     
     return ROUTE
 
@@ -172,13 +240,12 @@ def skip_photo(update: Update, context: CallbackContext) -> int:
 
 
 def route(update: Update, context: CallbackContext) -> int:
-    
+    print("------route---------")
     #mysql get route
-    route = 'A>B>C>D'
-    update.message.reply_text(
-        'Route: ' + route + '\n\n'
-        'Enjoy your hiking!'
-    )
+    #route = 'A>B>C>D'
+    
+    update.message.reply_html('https://www.skyscanner.com.hk/news/7-hong-kong-hiking-routes')
+    update.message.reply_text('Enjoy your hiking!')
 
     return ConversationHandler.END
 
@@ -200,7 +267,7 @@ def cancel(update: Update, context: CallbackContext) -> int:
 def main() -> None:
     """Run the bot."""
     # Create the Updater and pass it your bot's token.
-    updater = Updater("5211434946:AAEv-3PvEJ98N1ufat_t96KDgUyyuzl3KZY")
+    updater = Updater(token=(os.environ['ACCESS_TOKEN']), use_context=True)
 
     
 
@@ -213,7 +280,7 @@ def main() -> None:
         entry_points=[CommandHandler('start', start)],
         states={
             CHOOSE: [MessageHandler(Filters.all, choose)],
-            SEARCH: [MessageHandler(Filters.regex('^(/easy|/midium|/hard)$'), search)],
+            SEARCH: [MessageHandler(Filters.regex('^(/easy|/medium|/hard)$'), search)],
             LOCATION: [MessageHandler(Filters.all, location)],
             PHOTO: [MessageHandler(Filters.all, photo)],
             ROUTE: [MessageHandler(Filters.regex('^(/route)$'), route)],
